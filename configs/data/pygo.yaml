@@ -1,0 +1,6 @@
+_target_: src.data.gosyn.GoSynDataModule
+data_dir: "D:/dev/pygo_synthetic/renders_new"
+batch_size: 2 # Needs to be divisible by the number of devices (e.g., if in a distributed setup)
+train_val_test_split: [8000, 1000, 1000]
+num_workers: 2
+pin_memory: True
