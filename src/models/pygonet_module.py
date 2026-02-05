@@ -126,6 +126,7 @@ class PyGoNetModule(LightningModule):
 
         # update and log metrics
         self.train_loss(loss)
+        self.log('train/loss', loss)
         self.log_metrics("metrics_train", preds, targets)
         
         # we can return here dict with any tensors
@@ -150,6 +151,7 @@ class PyGoNetModule(LightningModule):
 
         # update and log metrics
         self.val_loss(loss)
+        self.log("val/loss", loss)
         self.log_metrics("metrics_val", preds, targets)
 
         return {"loss": loss, "preds": preds, "targets": targets}

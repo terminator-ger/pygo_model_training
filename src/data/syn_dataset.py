@@ -53,11 +53,11 @@ class GOSYNImageDataset(th.utils.data.Dataset):
 
     def image_transformer(self, image, label):
         # scale down image size
-        image = torchvision.transforms.Resize((256, 192))(image)
+        image = torchvision.transforms.Resize((786, 1024))(image)
         h,w = image.shape[1], image.shape[2]
         is_occluded = th.tensor([0], dtype=th.int32)
 
-        background_path = "D:" + os.sep + "unlabeled2017"
+        background_path = "/media/michael/SSD/unlabeled2017"
         background_images = os.listdir(background_path)
         bg = decode_image(os.path.join(background_path, background_images[th.randint(0, len(background_images), (1,)).item()]))
         bg = torchvision.transforms.Resize((h,w))(bg)
@@ -68,7 +68,7 @@ class GOSYNImageDataset(th.utils.data.Dataset):
         mask = image[3] != 0  # Alpha channel mask
         image = th.where(mask, image[:3], bg)
         
-        if False:# th.rand(1).item() < self.occlude_factor:
+        if th.rand(1).item() < self.occlude_factor:
             is_occluded = th.tensor([1], dtype=th.int32)
             label = th.zeros_like(label, dtype=th.int32)
             # Apply occlusion
@@ -76,13 +76,13 @@ class GOSYNImageDataset(th.utils.data.Dataset):
             pts = [(random() / 2 + 0.5) * cmath.exp(2j*np.pi*i/7) for i in range(7)]
             pts = convexHull([(pt.real, pt.imag ) for pt in pts])
             xs, ys = [interpolateSmoothly(zs, 30) for zs in zip(*pts)]
-            scale_x = int(np.random.randint(w//16, w//4, 1))
-            center_x = int(np.random.randint(0, w, 1))
-            center_y = int(np.random.randint(0, h, 1))
+            scale_x = np.random.randint(w//16, w//4)
+            center_x = np.random.randint(0, w)
+            center_y = np.random.randint(0, h)
             
             while cv2.pointPolygonTest(contours[0], (center_x, center_y), False) < 0:
-                center_x = int(np.random.randint(0, w, 1))
-                center_y = int(np.random.randint(0, h, 1))
+                center_x = np.random.randint(0, w)
+                center_y = np.random.randint(0, h)
             
             xs = [int((x * scale_x) + center_x) for x in xs]
             ys = [int((y * scale_x) + center_y) for y in ys]
@@ -121,7 +121,10 @@ class GOSYNImageDataset(th.utils.data.Dataset):
     
 
 if __name__ == "__main__":
-    dataset = GOSYNImageDataset(annotations_file="labels.parquet.gz", img_dir="e:\\dev\\pygo_synthetic\\renders_new")
+    dataset = GOSYNImageDataset(annotations_file="labels.parquet.gz", img_dir="/media/michael/Data1/dev/pygo_synthetic/renders_new")
+    import cv2
     print(f"Dataset size: {len(dataset)}")
-    img, labels = dataset[0]
+    for i in range(10):
+        img, labels = dataset[i]
+        cv2.imwrite(f'img_{i}.png', img.permute(1,2,0).detach().numpy()*255)
     print(f"Image shape: {img.shape}, Label: {labels}")

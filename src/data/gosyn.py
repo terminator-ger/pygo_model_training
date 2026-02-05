@@ -36,7 +36,7 @@ class GoSynDataModule(pl.LightningDataModule):
         data_dir: str = "data",
         train_val_test_split: tuple[int, int, int] = (6,2,2),
         batch_size: int = 64,
-        num_workers: int = 0,
+        num_workers: int = 1,
         pin_memory: bool = False,
     ):
         super().__init__()
