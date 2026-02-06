@@ -38,7 +38,7 @@ def interpolateSmoothly(xs, N):
 
 
 class GOSYNImageDataset(th.utils.data.Dataset):
-    def __init__(self, annotations_file, img_dir, train=True):
+    def __init__(self, annotations_file, img_dir, train=True, num_classes=3):
         self.img_labels = pd.read_parquet(os.path.join(img_dir, annotations_file))
         if train:
             # reserve 80% for training
@@ -50,25 +50,37 @@ class GOSYNImageDataset(th.utils.data.Dataset):
         self.img_dir = img_dir
         self.transform = self.image_transformer
         self.occlude_factor = 0.4
+        self.num_classes = num_classes
+        self.random_background = True
 
     def image_transformer(self, image, label):
         # scale down image size
-        image = torchvision.transforms.Resize((786, 1024))(image)
-        h,w = image.shape[1], image.shape[2]
-        is_occluded = th.tensor([0], dtype=th.int32)
+        # image = torchvision.transforms.Resize((786, 1024))(image)
+        #h,w = image.shape[1], image.shape[2]
+        h,w = image.shape[1], image.shape[0]
+        #is_occluded = th.tensor([0], dtype=th.int32)
 
-        background_path = "/media/michael/SSD/unlabeled2017"
+        background_path = "/home/michael/data/unlabeled2017"
         background_images = os.listdir(background_path)
-        bg = decode_image(os.path.join(background_path, background_images[th.randint(0, len(background_images), (1,)).item()]))
-        bg = torchvision.transforms.Resize((h,w))(bg)
-        image_fg = image[3].numpy()  # Convert to grayscale
+        if self.random_background:
+            bg_file = os.path.join(background_path, background_images[np.random.randint(len(background_images))])
+        else:
+            bg_file = os.path.join(background_path, background_images[0])
+            
+        bg = cv2.resize(cv2.imread(bg_file), (h,w)) 
+        #bg = torchvision.transforms.Resize((h,w))(bg)
+        #image_fg = image[3].numpy()  # Convert to grayscale
+        image_fg = image[:,:,3]
         ret, thresh = cv2.threshold(image_fg, 127, 255, cv2.THRESH_BINARY)
         contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
-        mask = image[3] != 0  # Alpha channel mask
-        image = th.where(mask, image[:3], bg)
+        #mask = image[3] != 0  # Alpha channel mask
+        mask = image[:,:,3] != 0  # Alpha channel mask
+        mask = np.stack([mask,mask,mask],-1)
+        #image = th.where(mask, image[:3], bg)
+        image = np.where(mask, image[:,:,:3], bg)
         
-        if th.rand(1).item() < self.occlude_factor:
+        if False: #th.rand(1).item() < self.occlude_factor:
             is_occluded = th.tensor([1], dtype=th.int32)
             label = th.zeros_like(label, dtype=th.int32)
             # Apply occlusion
@@ -92,7 +104,7 @@ class GOSYNImageDataset(th.utils.data.Dataset):
             img_np = image.permute(1,2,0).detach().numpy().copy()
             image = cv2.drawContours(img_np, (cnt,), 0, color=color, thickness=cv2.FILLED)
             image = th.tensor(image).permute(2,0,1)
-            label = th.ones_like(label, dtype=th.int32) * 3
+            label = th.ones_like(label, dtype=th.int32) * (self.num_classes - 1)
             
         image = image / 255.0  # Normalize to [0, 1]
         return image, label#, is_occluded
@@ -102,7 +114,8 @@ class GOSYNImageDataset(th.utils.data.Dataset):
 
     def __getitem__(self, idx):
         img_path = os.path.join(self.img_dir, self.img_labels.iloc[idx]['filename'])
-        image = decode_image(img_path)
+        #image = decode_image(img_path)
+        image = cv2.imread(img_path, cv2.IMREAD_UNCHANGED)
         positions = th.from_numpy(np.stack(self.img_labels.iloc[idx]['labels'])).to(th.int32)
         #bs = self.img_labels.iloc[idx]['board_size']
         #if bs == 19:
@@ -116,12 +129,13 @@ class GOSYNImageDataset(th.utils.data.Dataset):
             raise ValueError("Transform function is not defined.")
         
         image, labels = self.transform(image, positions)
+        image_th = th.from_numpy(image.transpose(2,0,1)).to(th.float32)# to rgb
             
-        return image, labels#, is_occluded)#, board_size)
+        return image_th, labels#, is_occluded)#, board_size)
     
 
 if __name__ == "__main__":
-    dataset = GOSYNImageDataset(annotations_file="labels.parquet.gz", img_dir="/media/michael/Data1/dev/pygo_synthetic/renders_new")
+    dataset = GOSYNImageDataset(annotations_file="labels.parquet.gz", img_dir="/media/michael/Data/dev/pygo_synthetic/renders_new")
     import cv2
     print(f"Dataset size: {len(dataset)}")
     for i in range(10):

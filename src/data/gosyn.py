@@ -51,10 +51,11 @@ class GoSynDataModule(pl.LightningDataModule):
         self.data_train: Dataset = None
         self.data_val: Dataset = None
         self.data_test: Dataset = None
-
+        self.val_is_test = False
+        
     @property
     def num_classes(self):
-        return 10
+        return 3
 
     def prepare_data(self):
         """Download data if needed.
@@ -70,13 +71,18 @@ class GoSynDataModule(pl.LightningDataModule):
         # load and split datasets only if not loaded already
         if not self.data_train and not self.data_val and not self.data_test:
 
-            trainset = GOSYNImageDataset(annotations_file='labels.parquet.gz', img_dir=self.hparams.data_dir, train=True)
-            testset = GOSYNImageDataset(annotations_file='labels.parquet.gz', img_dir=self.hparams.data_dir, train=False)
-            dataset = ConcatDataset(datasets=[trainset, testset])
-            self.data_train, self.data_val, self.data_test = random_split(
-                dataset=dataset,
-                lengths=self.hparams.train_val_test_split,
-            )
+            trainset = GOSYNImageDataset(annotations_file='labels.parquet.gz', img_dir=self.hparams.data_dir, train=True, num_classes=self.num_classes)
+            testset = GOSYNImageDataset(annotations_file='labels.parquet.gz', img_dir=self.hparams.data_dir, train=False, num_classes=self.num_classes)
+            if self.val_is_test:
+                self.data_train = trainset
+                self.data_test = trainset
+                self.data_val = trainset
+            else:
+                dataset = ConcatDataset(datasets=[trainset, testset])
+                self.data_train, self.data_val, self.data_test = random_split(
+                    dataset=dataset,
+                    lengths=self.hparams.train_val_test_split,
+                )
 
     def train_dataloader(self):
         return DataLoader(
@@ -85,7 +91,8 @@ class GoSynDataModule(pl.LightningDataModule):
             num_workers=self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
             shuffle=True,
-            persistent_workers=True,
+            persistent_workers=True if self.hparams.num_workers > 0 else False
+            #persistent_workers=self.hparams.persistent_workers,
         )
 
     def val_dataloader(self):
@@ -95,7 +102,8 @@ class GoSynDataModule(pl.LightningDataModule):
             num_workers=self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
             shuffle=False,
-            persistent_workers=True,
+            persistent_workers=True if self.hparams.num_workers > 0 else False
+            #persistent_workers=self.hparams.persistent_workers,
         )
 
     def test_dataloader(self):
@@ -105,7 +113,8 @@ class GoSynDataModule(pl.LightningDataModule):
             num_workers=self.hparams.num_workers,
             pin_memory=self.hparams.pin_memory,
             shuffle=False,
-            persistent_workers=True,
+            persistent_workers=True if self.hparams.num_workers > 0 else False
+            #persistent_workers=self.hparams.persistent_workers,
         )
 
     def teardown(self, stage: str = None):
