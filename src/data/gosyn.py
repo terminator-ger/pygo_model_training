@@ -5,7 +5,28 @@ import lightning as pl
 from torch.utils.data import ConcatDataset, DataLoader, Dataset, random_split
 from torchvision.transforms import transforms as T
 from src.data.syn_dataset import GOSYNImageDataset
+import torch
+import torch.nn.functional as F
+from src.models.yolo.utils.utils import xyxy_to_xywh
 
+def collate_fn(batch):
+    bboxes = [F.pad(x['bbox'],pad=(1,0), value=0) for x in batch]
+    classes = [F.pad(x['cls'],pad=(1,0), value=0) for x in batch]
+    
+    for idx, bbox in enumerate(bboxes):
+        bbox[:, 0] = idx
+        bbox[:, 1:] = xyxy_to_xywh(bbox[:,1:])
+
+    for idx, cls in enumerate(classes):
+        cls[:, 0] = idx
+
+    return {
+      'pixel_values': torch.stack([x['pixel_values'] for x in batch]),
+      'labels': torch.stack([x['labels'] for x in batch]),
+      'bbox': torch.cat(bboxes),
+      'cls': torch.cat(classes),
+      'corners': torch.stack([x['corners'] for x in batch])
+}
 
 class GoSynDataModule(pl.LightningDataModule):
     """Example of LightningDataModule for MNIST dataset.
@@ -86,6 +107,7 @@ class GoSynDataModule(pl.LightningDataModule):
             pin_memory=self.hparams.pin_memory,
             shuffle=True,
             persistent_workers=True,
+            collate_fn=collate_fn
         )
 
     def val_dataloader(self):
@@ -96,6 +118,7 @@ class GoSynDataModule(pl.LightningDataModule):
             pin_memory=self.hparams.pin_memory,
             shuffle=False,
             persistent_workers=True,
+            collate_fn=collate_fn
         )
 
     def test_dataloader(self):
@@ -106,6 +129,7 @@ class GoSynDataModule(pl.LightningDataModule):
             pin_memory=self.hparams.pin_memory,
             shuffle=False,
             persistent_workers=True,
+            collate_fn=collate_fn
         )
 
     def teardown(self, stage: str = None):

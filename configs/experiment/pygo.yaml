@@ -5,14 +5,14 @@
 
 defaults:
   - override /data: pygo 
-  - override /model: pygo
+  - override /model: yolo
   - override /callbacks: default
   - override /trainer: default
 
 # all parameters below will be merged with parameters from default configurations set above
 # this allows you to overwrite only specified parameters
 
-tags: ["pygo", "mobilenetv3_mh_large_150d"]
+tags: ["pygo", "yolo"]
 
 seed: 12345
 
@@ -23,10 +23,8 @@ trainer:
 
 model:
   optimizer:
-    lr: 0.002
+    lr: 0.0001
   net:
-    name: "mobilenetv3_mh_large_150d"
-    pretrained: true
   compile: false
 
 data:

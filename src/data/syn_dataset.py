@@ -8,6 +8,7 @@ import numpy as np
 import cmath
 from math import atan2
 import torch.nn.functional as F
+from typing import Dict
 from random import random
 
 def convexHull(pts):    #Graham's scan.
@@ -38,7 +39,7 @@ def interpolateSmoothly(xs, N):
 
 
 class GOSYNImageDataset(th.utils.data.Dataset):
-    def __init__(self, annotations_file, img_dir, train=True):
+    def __init__(self, annotations_file, img_dir, train=True, return_stone_bbox=True, return_board_corners=True):
         self.img_labels = pd.read_parquet(os.path.join(img_dir, annotations_file))
         if train:
             # reserve 80% for training
@@ -50,10 +51,17 @@ class GOSYNImageDataset(th.utils.data.Dataset):
         self.img_dir = img_dir
         self.transform = self.image_transformer
         self.occlude_factor = 0.4
+        self.return_stone_bbox = return_stone_bbox
+        self.return_board_corners = return_board_corners
 
-    def image_transformer(self, image, label):
+    def image_transformer(self, data: Dict):
         # scale down image size
-        image = torchvision.transforms.Resize((256, 192))(image)
+        image = data['pixel_values']
+        
+        c,w,h = image.shape
+        bbox = data['bbox']
+        bbox = bbox / th.tensor([w,h,w,h])
+        #image = torchvision.transforms.Resize((256, 192))(image)
         h,w = image.shape[1], image.shape[2]
         is_occluded = th.tensor([0], dtype=th.int32)
 
@@ -93,9 +101,11 @@ class GOSYNImageDataset(th.utils.data.Dataset):
             image = cv2.drawContours(img_np, (cnt,), 0, color=color, thickness=cv2.FILLED)
             image = th.tensor(image).permute(2,0,1)
             label = th.ones_like(label, dtype=th.int32) * 3
-            
+        
         image = image / 255.0  # Normalize to [0, 1]
-        return image, label#, is_occluded
+        data['pixel_values'] = image
+        data['bbox'] = bbox
+        return data
 
     def __len__(self):
         return len(self.img_labels)
@@ -103,7 +113,26 @@ class GOSYNImageDataset(th.utils.data.Dataset):
     def __getitem__(self, idx):
         img_path = os.path.join(self.img_dir, self.img_labels.iloc[idx]['filename'])
         image = decode_image(img_path)
+        c,h,w = image.shape
         positions = th.from_numpy(np.stack(self.img_labels.iloc[idx]['labels'])).to(th.int32)
+        if self.return_board_corners:
+            bbox = th.from_numpy(np.stack(self.img_labels.iloc[idx]['bbox'])).to(th.float32)
+            cls = th.from_numpy(np.stack(self.img_labels.iloc[idx]['cls'])).to(th.float32)[:,None]
+            cls -= 1
+        else:
+            bbox = th.zeros((0,4), dtype=th.float32)
+            cls = th.zeros((0,1), dtype=th.float32)
+        if self.return_board_corners:
+            corners = th.from_numpy(np.stack(self.img_labels.iloc[idx]['corners'])).to(th.float32)
+            cond_a = corners[:,0] < 0 
+            cond_b = corners[:,0] > w
+            cond_c = corners[:,1] < 0 
+            cond_d = corners[:,1] > h 
+            
+            idx = th.argwhere(th.logical_or(th.logical_or(th.logical_or(cond_a, cond_b), cond_c), cond_d))
+            corners[idx] = 0.0
+        else:
+            corners = None
         #bs = self.img_labels.iloc[idx]['board_size']
         #if bs == 19:
         #    board_size = th.tensor([0], dtype=th.long)
@@ -115,11 +144,14 @@ class GOSYNImageDataset(th.utils.data.Dataset):
         if not self.transform:
             raise ValueError("Transform function is not defined.")
         
-        image, labels = self.transform(image, positions)
-            
-        return image, labels#, is_occluded)#, board_size)
-    
-
+        data =  {"pixel_values": image, 
+                "labels": positions, 
+                "bbox": bbox, 
+                "cls": cls, 
+                "corners": corners
+        }
+        return self.transform(data)
+       
 if __name__ == "__main__":
     dataset = GOSYNImageDataset(annotations_file="labels.parquet.gz", img_dir="e:\\dev\\pygo_synthetic\\renders_new")
     print(f"Dataset size: {len(dataset)}")

@@ -94,7 +94,9 @@ class PyGoNetModule(LightningModule):
 
     def model_step(self, batch: Any):
         #x, (y_stones, y_occluded, y_board) = batch
-        x, y_stones = batch
+        x = batch['pixel_values']
+        y_stones = batch['labels']
+        
         logits = self.forward(x)
         loss_stones = self.criterion_stones(logits["stones"], y_stones)
         #loss_board = self.criterion_board(logits["board_size"], y_board.reshape(-1).to(torch.long))
