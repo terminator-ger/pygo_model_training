@@ -107,13 +107,13 @@ class PyGoNetModule(LightningModule):
         #loss_occluded = self.criterion_occluded(logits["occluded"], y_occluded.float())
         
         # preds_stones = torch.softmax(logits['stones'], dim=-1)   
-        preds_stones = logits['stones']
+        preds_stones = logits['stones'].detach().cpu()
 
         #preds_board = torch.softmax(logits["board_size"], dim=-1)
         #preds_occluded = logits["occluded"]
         #loss = torch.mean(torch.tensor([loss_stones, loss_board, loss_occluded]))
         #loss = torch.mean(torch.tensor([loss_stones, loss_occluded]))
-        return loss_stones, {"stones": preds_stones}, {"stones": y_stones}
+        return loss_stones, {"stones": preds_stones}, {"stones": y_stones.detach().cpu()}
                     #"board_size": preds_board, 
                     #"occluded": preds_occluded}, 
                 #{"stones": y_stones} 
@@ -132,17 +132,17 @@ class PyGoNetModule(LightningModule):
  
     def training_step(self, batch: Any, batch_idx: int):
         loss, preds, targets = self.model_step(batch)
-        #with torch.no_grad():
-        #    s = torch.argmax(preds['stones'].detach(), -1)
-        #    diff = s[0] - targets['stones'][0].detach()
-        #    matches = torch.argwhere(diff!=0).sum() / targets['stones'].shape[0]
-        #    self.matches.append(matches.item())
-        #self.log('train/matches_step', matches)
+        with torch.no_grad():
+            s = torch.argmax(preds['stones'].detach().cpu(), -1)
+            diff = s[0] - targets['stones'][0].detach().cpu()
+            matches = torch.argwhere(diff!=0).sum() / targets['stones'].shape[0]
+            self.matches.append(matches.item())
+        self.log('train/misses_step', matches, on_step=True)
 
         # update and log metrics
 
-        self.train_loss(loss)
-        self.log('train/loss', self.train_loss)
+        self.train_loss(loss.detach().cpu())
+        self.log('train/loss', self.train_loss, on_step=True)
         self.log_metrics("metrics_train", preds, targets)
 
         #if batch_idx % 50 == 0:
@@ -182,11 +182,11 @@ class PyGoNetModule(LightningModule):
         loss, preds, targets = self.model_step(batch)
 
         # update and log metrics
-        self.val_loss(loss)
+        self.val_loss(loss.detach().cpu())
         self.log("val/loss", self.val_loss)
         self.log_metrics("metrics_val", preds, targets)
 
-        return {"loss": loss, "preds": preds, "targets": targets}
+        return loss#{"loss": loss, "preds": preds, "targets": targets}
 
 
     def test_step(self, batch: Any, batch_idx: int):

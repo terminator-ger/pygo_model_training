@@ -16,7 +16,7 @@ net:
   _target_: src.models.components.pygonet.PyGoNet
   name: "mobilenetv3_mh_large_100"
   pretrained: true
-  num_classes: 4
+  num_classes: 3
 
 # compile model for faster training with pytorch 2.0
 compile: false
