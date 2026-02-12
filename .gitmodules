@@ -1,3 +1,3 @@
-[submodule "src/models/simple-yolo-pytorch"]
-	path = src/models/simple-yolo-pytorch
-	url = https://github.com/zh320/simple-yolo-pytorch.git
+[submodule "src/models/yolo"]
+	path = src/models/yolo
+	url = https://github.com/terminator-ger/simple-yolo-pytorch.git

@@ -61,7 +61,10 @@ class GOSYNImageDataset(th.utils.data.Dataset):
         c,w,h = image.shape
         bbox = data['bbox']
         bbox = bbox / th.tensor([w,h,w,h])
-        #image = torchvision.transforms.Resize((256, 192))(image)
+        
+
+        image = torchvision.transforms.Resize((512, 512))(image)
+        
         h,w = image.shape[1], image.shape[2]
         is_occluded = th.tensor([0], dtype=th.int32)
 

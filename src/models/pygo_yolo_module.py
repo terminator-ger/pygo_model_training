@@ -1,16 +1,13 @@
 from typing import Dict, Any
 import torch
 from lightning import LightningModule
-from torch.cuda import amp
 from torchvision.ops import batched_nms, nms
 
-from .yolo.core.yolo_trainer import YOLOTrainer
 from .yolo.configs.my_config import MyConfig
 
 from .yolo.utils.utils import xywh_to_xyxy
-from .yolo.utils import sampler_set_epoch
 from .yolo.models.yolo import YOLO
-from .yolo.core.loss import get_loss_fn
+from .yolo.core.loss import get_loss_fn, KeypointLoss
 from .yolo.utils.metrics import get_det_metrics
 
 class PyGoYoloModule(LightningModule):
@@ -30,7 +27,8 @@ class PyGoYoloModule(LightningModule):
                             label_assignment_method=config.label_assignment_method, anchor_boxes=config.anchor_boxes,
                             channel_sparsity=config.channel_sparsity)
 
-        self.loss_fn = get_loss_fn(config)
+        self.loss_det_fn = get_loss_fn(config)
+        self.loss_kp_fn = KeypointLoss(sigmas=torch.tensor([1/4]))
         self.mAP = get_det_metrics().to(self.device)
  
         # this line allows to access init params with 'self.hparams' attribute
@@ -58,20 +56,22 @@ class PyGoYoloModule(LightningModule):
         
         bboxes = batch['bbox'].to(self.device, dtype=torch.float32)    
         classes = batch['cls'].to(self.device, dtype=torch.float32)    
+        corners = batch['corners'].to(self.device, dtype=torch.float32)    
 
         # Forward path
         with torch.amp.autocast(enabled=self.config.amp_training, device_type='cuda'):
             preds = self.model_step(batch['pixel_values'], is_training=True)
-            loss, (conf_loss, iou_loss, class_loss) = self.loss_fn(preds, bboxes, classes)
+            loss_det, (conf_loss, iou_loss, class_loss) = self.loss_det_fn(preds['det'], bboxes, classes)
+            loss_kp = self.loss_kp_fn(preds['pose'], corners)
 
-        if self.config.use_tb and self.main_rank:
-            self.log_metrics('train/loss', loss.detach(), self.train_itrs)
+        if self.config.use_tb:
+            self.log_metrics('train/loss_det', loss_det.detach(), self.train_itrs)
             self.log_metrics('train/conf_loss', conf_loss, self.train_itrs)
             self.log_metrics('train/iou_loss', iou_loss, self.train_itrs)
             self.log_metrics('train/class_loss', class_loss, self.train_itrs)
 
 
-        return loss
+        return (loss_det + loss_kp).mean()
     
 
     @torch.no_grad()
@@ -85,14 +85,14 @@ class PyGoYoloModule(LightningModule):
 
         _, _, height, width = batch['pixel_values'].shape
         outputs, targets = [], []
-        for i, pred in enumerate(preds):
+        for i, pred in enumerate(preds['det']):
             pred_conf = pred[:, 0]
 
             pred_boxes = xywh_to_xyxy(pred[:, 1:5])
             pred_boxes[:, 0::2].clamp_(0, width)
             pred_boxes[:, 1::2].clamp_(0, height)
 
-            cls_logits, pred_cls = preds[i][:, 5:].max(dim=1)
+            cls_logits, pred_cls = preds['det'][i][:, 5:].max(dim=1)
             pred_conf *= cls_logits
             pred = torch.cat([pred_conf.unsqueeze(1), pred_boxes, pred_cls.unsqueeze(1)], dim=1)
             output = pred[pred_conf > self.config.conf_thrs]
