@@ -53,6 +53,8 @@ class GOSYNImageDataset(th.utils.data.Dataset):
         self.occlude_factor = 0.4
         self.return_stone_bbox = return_stone_bbox
         self.return_board_corners = return_board_corners
+        self.num_classes = num_classes
+        self.random_background = True
 
     def image_transformer(self, data: Dict):
         # scale down image size
@@ -68,18 +70,27 @@ class GOSYNImageDataset(th.utils.data.Dataset):
         h,w = image.shape[1], image.shape[2]
         is_occluded = th.tensor([0], dtype=th.int32)
 
-        background_path = "D:" + os.sep + "unlabeled2017"
+        background_path = "/home/michael/data/unlabeled2017"
         background_images = os.listdir(background_path)
-        bg = decode_image(os.path.join(background_path, background_images[th.randint(0, len(background_images), (1,)).item()]))
-        bg = torchvision.transforms.Resize((h,w))(bg)
-        image_fg = image[3].numpy()  # Convert to grayscale
+        if self.random_background:
+            bg_file = os.path.join(background_path, background_images[np.random.randint(len(background_images))])
+        else:
+            bg_file = os.path.join(background_path, background_images[0])
+            
+        bg = cv2.resize(cv2.imread(bg_file), (h,w)) 
+        #bg = torchvision.transforms.Resize((h,w))(bg)
+        #image_fg = image[3].numpy()  # Convert to grayscale
+        image_fg = image[:,:,3]
         ret, thresh = cv2.threshold(image_fg, 127, 255, cv2.THRESH_BINARY)
         contours, hierarchy = cv2.findContours(thresh, cv2.RETR_TREE, cv2.CHAIN_APPROX_SIMPLE)
 
-        mask = image[3] != 0  # Alpha channel mask
-        image = th.where(mask, image[:3], bg)
+        #mask = image[3] != 0  # Alpha channel mask
+        mask = image[:,:,3] != 0  # Alpha channel mask
+        mask = np.stack([mask,mask,mask],-1)
+        #image = th.where(mask, image[:3], bg)
+        image = np.where(mask, image[:,:,:3], bg)
         
-        if False:# th.rand(1).item() < self.occlude_factor:
+        if False: #th.rand(1).item() < self.occlude_factor:
             is_occluded = th.tensor([1], dtype=th.int32)
             label = th.zeros_like(label, dtype=th.int32)
             # Apply occlusion
@@ -87,13 +98,13 @@ class GOSYNImageDataset(th.utils.data.Dataset):
             pts = [(random() / 2 + 0.5) * cmath.exp(2j*np.pi*i/7) for i in range(7)]
             pts = convexHull([(pt.real, pt.imag ) for pt in pts])
             xs, ys = [interpolateSmoothly(zs, 30) for zs in zip(*pts)]
-            scale_x = int(np.random.randint(w//16, w//4, 1))
-            center_x = int(np.random.randint(0, w, 1))
-            center_y = int(np.random.randint(0, h, 1))
+            scale_x = np.random.randint(w//16, w//4)
+            center_x = np.random.randint(0, w)
+            center_y = np.random.randint(0, h)
             
             while cv2.pointPolygonTest(contours[0], (center_x, center_y), False) < 0:
-                center_x = int(np.random.randint(0, w, 1))
-                center_y = int(np.random.randint(0, h, 1))
+                center_x = np.random.randint(0, w)
+                center_y = np.random.randint(0, h)
             
             xs = [int((x * scale_x) + center_x) for x in xs]
             ys = [int((y * scale_x) + center_y) for y in ys]
@@ -156,7 +167,10 @@ class GOSYNImageDataset(th.utils.data.Dataset):
         return self.transform(data)
        
 if __name__ == "__main__":
-    dataset = GOSYNImageDataset(annotations_file="labels.parquet.gz", img_dir="e:\\dev\\pygo_synthetic\\renders_new")
+    dataset = GOSYNImageDataset(annotations_file="labels.parquet.gz", img_dir="/media/michael/Data/dev/pygo_synthetic/renders_new")
+    import cv2
     print(f"Dataset size: {len(dataset)}")
-    img, labels = dataset[0]
+    for i in range(10):
+        img, labels = dataset[i]
+        cv2.imwrite(f'img_{i}.png', img.permute(1,2,0).detach().numpy()*255)
     print(f"Image shape: {img.shape}, Label: {labels}")

@@ -40,7 +40,7 @@ class PyGoNetModule(LightningModule):
         self.net = net
 
         # loss function
-        self.criterion_stones = StoneLoss()
+        self.criterion_stones = StoneLoss(num_classes=self.net.net.num_classes)
         #self.criterion_board = torch.nn.CrossEntropyLoss()
         #self.criterion_occluded = torch.nn.BCEWithLogitsLoss()
         self.metrics = torch.nn.ModuleDict()
@@ -48,9 +48,9 @@ class PyGoNetModule(LightningModule):
         for split in ["metrics_train", "metrics_val", "metrics_test"]:
             self.metrics[split] = torch.nn.ModuleDict({
                 "stones": MetricCollection([
-                    Accuracy(task="multiclass", num_classes=3),
-                    F1Score(task="multiclass", num_classes=3),
-                    AUROC(task="multiclass", num_classes=3),
+                    Accuracy(task="multiclass", num_classes=self.net.net.num_classes),
+                    F1Score(task="multiclass", num_classes=self.net.net.num_classes),
+                    AUROC(task="multiclass", num_classes=self.net.net.num_classes),
                 ],
                 prefix=f"{split}/stones/"),
                 #"board_size": MetricCollection([
@@ -80,9 +80,11 @@ class PyGoNetModule(LightningModule):
         self.train_loss = loss_metric.clone()
         self.val_loss = loss_metric.clone()
         self.test_loss = loss_metric.clone()
+        self.hits = MeanMetric()
 
         # for tracking best so far validation accuracy
         self.val_acc_best = MaxMetric()
+        self.matches = []
     
     def forward(self, x: torch.Tensor):
         return self.net(x)
@@ -91,6 +93,10 @@ class PyGoNetModule(LightningModule):
         # by default lightning executes validation step sanity checks before training starts,
         # so we need to make sure val_acc_best doesn't store accuracy from these checks
         self.val_acc_best.reset()
+        #torch.cuda.memory._record_memory_history(
+        #    max_entries=100000, 
+        #    enabled='all'
+        #)
 
     def model_step(self, batch: Any):
         #x, (y_stones, y_occluded, y_board) = batch
@@ -102,12 +108,14 @@ class PyGoNetModule(LightningModule):
         #loss_board = self.criterion_board(logits["board_size"], y_board.reshape(-1).to(torch.long))
         #loss_occluded = self.criterion_occluded(logits["occluded"], y_occluded.float())
         
-        preds_stones = torch.softmax(logits['stones'], dim=-1)   
+        # preds_stones = torch.softmax(logits['stones'], dim=-1)   
+        preds_stones = logits['stones'].detach().cpu()
+
         #preds_board = torch.softmax(logits["board_size"], dim=-1)
         #preds_occluded = logits["occluded"]
         #loss = torch.mean(torch.tensor([loss_stones, loss_board, loss_occluded]))
         #loss = torch.mean(torch.tensor([loss_stones, loss_occluded]))
-        return loss_stones, {"stones": preds_stones}, {"stones": y_stones}
+        return loss_stones, {"stones": preds_stones}, {"stones": y_stones.detach().cpu()}
                     #"board_size": preds_board, 
                     #"occluded": preds_occluded}, 
                 #{"stones": y_stones} 
@@ -115,25 +123,49 @@ class PyGoNetModule(LightningModule):
                     #"occluded": y_occluded}
 
     def log_metrics(self, split: str, preds: Any, targets: Any):
-        for name in self.metrics[split].keys():
-            if name in ["stones", "board_size"]:
-                m = self.metrics[split][name](preds[name].reshape(-1, 3), targets[name].reshape(-1))
-            else:
-                m = self.metrics[split][name](preds[name].sigmoid().reshape(-1), targets[name].reshape(-1))
-        
-            self.log_dict(m, on_step=True, on_epoch=True)
+        with torch.no_grad():
+            for name in self.metrics[split].keys():
+                if name in ["stones", "board_size"]:
+                    m = self.metrics[split][name](preds[name].reshape(-1, self.net.net.num_classes), targets[name].reshape(-1))
+                else:
+                    m = self.metrics[split][name](preds[name].sigmoid().reshape(-1), targets[name].reshape(-1))
+            
+                self.log_dict(m, on_step=True, on_epoch=True)
  
     def training_step(self, batch: Any, batch_idx: int):
         loss, preds, targets = self.model_step(batch)
+        with torch.no_grad():
+            s = torch.argmax(preds['stones'].detach().cpu(), -1)
+            diff = s[0] - targets['stones'][0].detach().cpu()
+            matches = torch.argwhere(diff!=0).sum() / targets['stones'].shape[0]
+            self.matches.append(matches.item())
+        self.log('train/misses_step', matches, on_step=True)
 
         # update and log metrics
-        self.train_loss(loss)
+
+        self.train_loss(loss.detach().cpu())
+        self.log('train/loss', self.train_loss, on_step=True)
         self.log_metrics("metrics_train", preds, targets)
-        
+
+        #if batch_idx % 50 == 0:
+        #    print('step')
+        #    try:
+        #        torch.cuda.memory._dump_snapshot(f"dump.pickle")
+        #    except Exception as e:
+        #        print(f"Failed to capture memory snapshot {e}")
+
+        #    # Stop recording memory snapshot history.
+
+        #if batch_idx % 100 == 0:
+        #    #torch.cuda.memory._record_memory_history(enabled='all')
+        #    print('clear')
+        #    torch.cuda.empty_cache()
+
         # we can return here dict with any tensors
         # and then read it in some callback or in `training_epoch_end()` below
         # remember to always return loss from `training_step()` or backpropagation will fail!
-        return {"loss": loss, "preds": preds, "targets": targets}
+        #return {"loss": loss, "preds": preds, "targets": targets}
+        return loss#{"loss": loss, "preds": preds, "targets": targets}
 
     def on_train_epoch_end(self):
         # `outputs` is a list of dicts returned from `training_step()`
@@ -144,17 +176,19 @@ class PyGoNetModule(LightningModule):
 
         # consider detaching tensors before returning them from `training_step()`
         # or using `on_train_epoch_end()` instead which doesn't accumulate outputs
-
+        #self.log("train/matches", torch.mean(torch.stack(self.matches)))
+        #self.matches = []
         pass
 
     def validation_step(self, batch: Any, batch_idx: int):
         loss, preds, targets = self.model_step(batch)
 
         # update and log metrics
-        self.val_loss(loss)
+        self.val_loss(loss.detach().cpu())
+        self.log("val/loss", self.val_loss)
         self.log_metrics("metrics_val", preds, targets)
 
-        return {"loss": loss, "preds": preds, "targets": targets}
+        return loss#{"loss": loss, "preds": preds, "targets": targets}
 
 
     def test_step(self, batch: Any, batch_idx: int):
@@ -162,6 +196,7 @@ class PyGoNetModule(LightningModule):
 
         # update and log metrics
         self.test_loss(loss)
+        self.log("test/loss", self.test_loss)
         self.log_metrics("metrics_test", preds, targets)
 
         return {"loss": loss, "preds": preds, "targets": targets}

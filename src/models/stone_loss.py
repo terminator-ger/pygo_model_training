@@ -11,19 +11,19 @@ class StoneLoss(th.nn.Module):
     
     def forward(self, predictions, targets):
         
-        predictions = th.softmax(predictions, dim=-1)  
-        targets = F.one_hot(targets.to(th.long), num_classes=self.num_classes) 
+        #predictions = th.softmax(predictions, dim=-1)  
+        targets_one_hot = F.one_hot(targets.to(th.long), num_classes=self.num_classes) 
         
-        t90 = th.rot90(targets, k=1, dims=[1,2])
-        t180 = th.rot90(t90, k=1, dims=[1,2])
-        t270 = th.rot90(t180, k=1, dims=[1,2])
-        
-        loss0 = self.loss_fn(predictions, targets.float())
-        loss90 = self.loss_fn(predictions, t90.float())
-        loss180 = self.loss_fn(predictions, t180.float())
-        loss270 = self.loss_fn(predictions, t270.float())
-        loss = th.min(th.stack([loss0, loss90, loss180, loss270]), dim=0).values 
-        
+        t90 = th.rot90(targets_one_hot, k=1, dims=[1,2])
+        t180 = th.rot90(targets_one_hot, k=2, dims=[1,2])
+        t270 = th.rot90(targets_one_hot, k=3, dims=[1,2])
+
+        loss0 = self.loss_fn(predictions, targets_one_hot.float())
+        #loss90 = self.loss_fn(predictions, t90.float())
+        #loss180 = self.loss_fn(predictions, t180.float())
+        #loss270 = self.loss_fn(predictions, t270.float())
+        #loss = th.min(th.stack([loss0, loss90, loss180, loss270]), dim=0).values 
+        loss = loss0
         return self.weight * loss
     
     

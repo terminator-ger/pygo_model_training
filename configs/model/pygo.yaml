@@ -16,6 +16,7 @@ net:
   _target_: src.models.components.pygonet.PyGoNet
   name: "yolo"
   pretrained: true
+  num_classes: 3
 
 # compile model for faster training with pytorch 2.0
 compile: false
